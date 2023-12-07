@@ -136,8 +136,7 @@ ggsave("Fig/Fig1.jpeg", plot = Fig1)
 ggsave("Fig/Fig2.jpeg", plot = Fig2)
 anim_save("Fig/Fig3.gif", plot = Fig3)
 
-# 4.MoveR analysis ----
-# Reimport cleaned data
+# 3. trajR ----
 df = read.csv("data/data-clean/carab_sleap_clean.csv")
 
 df = df %>% 
@@ -149,6 +148,21 @@ trj = TrajFromCoords(track = df, xCol = 5, yCol = 6, timeCol = 4, fps = 25)
 derivs <- TrajDerivatives(trj)
 
 plot(derivs$acceleration ~ derivs$accelerationTimes)
+
+# Autocorrelation
+corr <- TrajDirectionAutocorrelations(trj)
+plot(corr)
+
+# 4. MoveR analysis ----
+# Reimport cleaned data
+df = read.csv("data/data-clean/carab_sleap_clean.csv")
+
+df = df %>% 
+  drop_na() %>%  # Remove NAs
+  rename(x = X, y = Y) %>% 
+  data.frame()
+
+trj = TrajFromCoords(track = df, xCol = 5, yCol = 6, timeCol = 4, fps = 25)
 
 df = trj %>%
   rename(x.pos = x, y.pos = y)  # rename X and Y columns
