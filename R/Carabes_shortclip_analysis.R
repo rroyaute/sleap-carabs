@@ -1,8 +1,9 @@
 library(rhdf5); library(tidyverse); library(viridis)
-library(gganimate)
+library(gganimate); library(MoveR); library(trajr)
 
-df = H5Fopen('data/labels.v000.analysis.h5') 
+df = H5Fopen('data/data-raw/labels.v000.analysis.h5') 
 
+# 1. Data import ----
 list_df <- h5dump(df)
 list_df$tracks
 # 5824 frames
@@ -87,22 +88,63 @@ ID.a = data.frame(
 
 df = rbind(ID.h, ID.t, ID.a)
 
+# Export 
+write.csv(file = "data/data-clean/carab_sleap_clean.csv", x = df, row.names = F)
 
+# 2. Simple Figures ----
 
-df %>% 
-  ggplot(aes(x = X, y = Y, color = ID, group = "part")) +
+# Plot XY coordinates by ID
+Fig1 = df %>% 
+  ggplot(aes(x = X, y = Y, color = ID, group = part)) +
   geom_point(alpha = .2) +
   scale_color_viridis(discrete = T) +
   facet_wrap(~ part) +
   coord_equal(ratio = 1) +
-  theme_bw(14) 
+  theme_bw(14) +
+  xlab("frame")
+
+# Plot X-axes coordinates aver time
+Fig2 = df %>% 
+  filter(ID == "ID1") %>% 
+  ggplot(aes(x = t, y = X, group = ID, color = part.f)) +
+  geom_point(alpha = .2) +
+  scale_color_viridis(discrete = T) +
+  # facet_wrap(~ID) +
+  theme_bw(14) +
+  xlab("frame")
 
 
-df %>% 
+# Animate!
+Fig3 = df %>% 
   filter(part == 2) %>% # Show thorax tracks onlys
   ggplot(aes(x = X, y = Y, color = ID)) +
   geom_point(size = 4) +
   scale_color_viridis(discrete = T) +
   coord_equal(ratio = 1) +
   transition_time(t) +
-  theme_bw(14) 
+  theme_bw(14) +
+  xlab("frame") 
+
+# Save figures
+ggsave("Fig/Fig1.jpeg", plot = Fig1)
+ggsave("Fig/Fig2.jpeg", plot = Fig2)
+anim_save("Fig/Fig3.gif", plot = Fig3)
+
+# 4.MoveR analysis ----
+# Reimport cleaned data
+df = read.csv("data/data-clean/carab_sleap_clean.csv")
+
+df = df %>% 
+  drop_na() %>%  # Remove NAs
+  rename(x = X, y = Y) %>% 
+  data.frame()
+
+trj = TrajFromCoords(track = df, xCol = 5, yCol = 6, timeCol = 4, fps = 25)
+derivs <- TrajDerivatives(trj)
+
+plot(derivs$acceleration ~ derivs$accelerationTimes)
+
+df = trj %>%
+  rename(x.pos = x, y.pos = y)  # rename X and Y columns
+  
+df.speed = speed(df, scale = 1, timeCol = t)
