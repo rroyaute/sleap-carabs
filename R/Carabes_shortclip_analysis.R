@@ -4,6 +4,8 @@ library(gganimate); library(MoveR); library(trajr)
 df = H5Fopen('data/data-raw/labels.v000.analysis.h5') 
 
 # 1. Data import ----
+df = H5Fopen('data/labels.v000.analysis.h5') 
+
 list_df <- h5dump(df)
 list_df$tracks
 # 5824 frames
@@ -96,6 +98,10 @@ write.csv(file = "data/data-clean/carab_sleap_clean.csv", x = df, row.names = F)
 # Plot XY coordinates by ID
 Fig1 = df %>% 
   ggplot(aes(x = X, y = Y, color = ID, group = part)) +
+
+
+df %>% 
+  ggplot(aes(x = X, y = Y, color = ID, group = "part")) +
   geom_point(alpha = .2) +
   scale_color_viridis(discrete = T) +
   facet_wrap(~ part) +
@@ -116,7 +122,7 @@ Fig2 = df %>%
 
 # Animate!
 Fig3 = df %>% 
-  filter(part == 2) %>% # Show thorax tracks onlys
+  filter(part == 2) %>% # Show thorax tracks only
   ggplot(aes(x = X, y = Y, color = ID)) +
   geom_point(size = 4) +
   scale_color_viridis(discrete = T) +
