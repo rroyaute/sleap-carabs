@@ -1,5 +1,5 @@
 library(rhdf5); library(tidyverse); library(viridis)
-library(gganimate); library(MoveR); library(trajr)
+library(gganimate); library(MoveR)
 
 df = H5Fopen('data/data-raw/labels.v000.analysis.h5') 
 
@@ -86,7 +86,7 @@ ID.a = data.frame(
   t = rep(1:length(ID1.a[,1]), 4),
   X = c(ID1.a[,1],ID2.a[,1],ID3.a[,1],ID4.a[,1]),
   Y = c(ID1.a[,2],ID2.a[,2],ID3.a[,2],ID4.a[,2])
-  )
+)
 
 df = rbind(ID.h, ID.t, ID.a)
 
@@ -97,10 +97,6 @@ write.csv(file = "data/data-clean/carab_sleap_clean.csv", x = df, row.names = F)
 
 # Plot XY coordinates by ID
 Fig1 = df %>% 
-  ggplot(aes(x = X, y = Y, color = ID, group = part)) +
-
-
-df %>% 
   ggplot(aes(x = X, y = Y, color = ID, group = "part")) +
   geom_point(alpha = .2) +
   scale_color_viridis(discrete = T) +
@@ -109,7 +105,7 @@ df %>%
   theme_bw(14) +
   xlab("frame")
 
-# Plot X-axes coordinates aver time
+# Plot X-axes coordinates over time
 Fig2 = df %>% 
   filter(ID == "ID1") %>% 
   ggplot(aes(x = t, y = X, group = ID, color = part.f)) +
@@ -136,35 +132,157 @@ ggsave("Fig/Fig1.jpeg", plot = Fig1)
 ggsave("Fig/Fig2.jpeg", plot = Fig2)
 anim_save("Fig/Fig3.gif", plot = Fig3)
 
-# 3. trajR ----
-df = read.csv("data/data-clean/carab_sleap_clean.csv")
-
-df = df %>% 
-  drop_na() %>%  # Remove NAs
-  rename(x = X, y = Y) %>% 
-  data.frame()
-
-trj = TrajFromCoords(track = df, xCol = 5, yCol = 6, timeCol = 4, fps = 25)
-derivs <- TrajDerivatives(trj)
-
-plot(derivs$acceleration ~ derivs$accelerationTimes)
-
-# Autocorrelation
-corr <- TrajDirectionAutocorrelations(trj)
-plot(corr)
-
-# 4. MoveR analysis ----
+# 4.MoveR analysis ----
 # Reimport cleaned data
-df = read.csv("data/data-clean/carab_sleap_clean.csv")
+tracksL <- readPlain("data/data-clean/carab_sleap_clean.csv", 
+                     id = "ID", 
+                     timeCol = "t", 
+                     sep = ",")
 
-df = df %>% 
-  drop_na() %>%  # Remove NAs
-  rename(x = X, y = Y) %>% 
-  data.frame()
+# create a new identity variable considering indiv and body part
+tracksL[["IDBody"]] <- paste(tracksL$identity, tracksL$part.f, sep = "_")
 
-trj = TrajFromCoords(track = df, xCol = 5, yCol = 6, timeCol = 4, fps = 25)
+# convert it to a list of tracklet based on IDBody
+tracks <- convert2Tracklets(tracksL, by = "IDBody")
 
-df = trj %>%
-  rename(x.pos = x, y.pos = y)  # rename X and Y columns
+# create a custom filter to remove NA
+filterNA.x <- filterFunc(tracks,
+                         toFilter = "x.pos",
+                         customFunc = is.na)
+# filter Na entries
+tracksNoNa <- filterTracklets(tracks,
+                              filter = filterNA.x)
+
+# check the summary of the filtering process 
+str(tracksNoNa[["SummaryFiltering"]])
+
+# as filter is very conservative and split tracklets when data, here NA, are removed, we need to merge them again based on IDBody
+# ! CAUTION ! HERE we are merging the tracklets again after filtering, it can result in biased computation of metrics as missing parts of the trajectories are
+# replaced by a straight line.
+tracksNoNaL <- convert2List(tracksNoNa[["CleanedTracklets"]])
+tracksNoNa <- convert2Tracklets(tracksNoNaL, 
+                                by = "IDBody")
+
+# reorder the data according to the frame for each tracklet
+tracksNoNa <- lapply(tracksNoNa, function(x) x[order(x[["frame"]]),])
+
+# draw the tracklets
+par(mfrow=c(1,1))
+drawTracklets(tracksNoNa,
+              timeCol = "frame",
+              colId = "IDBody"#,
+              # selTrack = c(1,2,3) # in case you want to display only some tracklets (here all body parts of ID1)
+)
+
+# compute speed over the different tracklets (IDBody)
+tracksNoNa2 <- analyseTracklets(tracksNoNa,
+                                customFunc = list(
+                                  speed = function(x)
+                                    speed(x, timeCol = "frame")
+                                ))
+
+# compute covariance between body part
+## split the dataset according to body part
+BP <- list()
+for(i in c("head", "thorax", "abdomen")){
+  temp <- tracksNoNa2[grep(i, names(tracksNoNa2))]
+  BP[[i]] <- temp
+}
+
+## compute mean speed over time for each body parts 
+SpeedRes <- list()
+for (i in names(BP)) {
+  SpeedRes[[i]] <- temporalTrend(
+    BP[[i]],
+    customFunc = list(
+      speed_all =
+        function(x)
+          mean(x$speed, na.rm = T)
+    ),
+    timeCol = "frame",
+    Tstep = 100, # sliding window over 100 frames
+    sampling = 20,  # sampling step of 20 frames
+    wtd = F
+  )[["speed_all"]]
+}
+
+### plot the resulting speed trends
+# plot the result
+par(mfrow = c(1, 3))
+for (p in seq_along(SpeedRes)) {
+  plot(
+    NULL,
+    ylim = c(round(
+      min(SpeedRes[[p]][, 1], na.rm = T),
+      digits = 1
+    ),
+    round(
+      max(SpeedRes[[p]][, 1], na.rm = T),
+      digits = 1
+    )),
+    xlim = c(
+      min(SpeedRes[[p]]$frame, na.rm = T),
+      max(SpeedRes[[p]]$frame, na.rm = T)
+    ),
+    main = names(SpeedRes)[p],
+    ylab = "speed (pixels/frame)",
+    xlab = "Time (frames)"
+  )
+  lines(SpeedRes[[p]][, 1] ~ SpeedRes[[p]]$frame , col = "darkred")
+}
+
+## Compute the covariance between body parts (should add a function to MoveR but in the meantime the following should do the trick)
+
+### remove the NA inserted at the beginning of each sliding window
+SpeedResNoNa <- lapply(SpeedRes, function(x) na.omit(x))
+
+### specify some starting parameter (the sliding window size in frame and the combination to do)
+combination <- combn(names(SpeedResNoNa), 2)
+Window = 10
+
+### let's compute covariance between combinations of variables selected
+CovRes = list()
+for (j in seq(ncol(combination))) {
+  ##### initialize an empty vector to retrieve the results
+  VecL <- length(SpeedResNoNa[[combination[1, j]]]$speed_all)
+  covResVec <-
+    rep(NA, VecL)
   
-df.speed = speed(df, scale = 1, timeCol = t)
+  ##### loop over the dataset to perform covariance computation over the whole dataset
+  for (i in 1:VecL) {
+    start <- max(1, i - Window %/% 2)
+    end <- min(length(x), i + Window %/% 2)
+    if(i < Window %/% 2 | i > VecL - Window %/% 2){
+      next
+    }
+    windowX <- SpeedResNoNa[[combination[1, j]]]$speed_all[start:end]
+    windowY <- SpeedResNoNa[[combination[2, j]]]$speed_all[start:end]
+    covResVec[i] <- cov(windowX, windowY, use = "complete.obs")
+  }
+  CovRes[[paste(combination[1, j], combination[2, j], sep = "_")]] <-
+    covResVec
+}
+
+### plot the resulting covariances 
+par(mfrow = c(1, 3))
+for (p in seq_along(CovRes)) {
+  plot(
+    NULL,
+    ylim = c(round(
+      min(CovRes[[p]], na.rm = T),
+      digits = 1
+    ),
+    round(
+      max(CovRes[[p]], na.rm = T),
+      digits = 1
+    )),
+    xlim = c(
+      min(SpeedResNoNa[[1]]$frame, na.rm = T),
+      max(SpeedResNoNa[[1]]$frame, na.rm = T)
+    ),
+    main = names(CovRes)[p],
+    ylab = "covariance",
+    xlab = "Time (frames)"
+  )
+  lines(CovRes[[p]] ~ SpeedResNoNa[[1]]$frame , col = "darkred")
+}
